@@ -1,0 +1,185 @@
+#include "stdio.h"
+#include "sys/types.h"
+#include "sys/times.h"
+#include "ulocks.h"
+#include "sys/param.h"
+#include <time.h>
+#define TYP double
+/*
+*This program will produce the prefix sum of an array.
+*       Written for IRIX 6.5, SGI
+        Given an array A[0..n-1],
+    i.          partition into p subarrays
+    ii.         local sums of individual subarrays
+    iii.        find prefix sums on local sums(ii)
+    iv.         use last index of left neighbor to calc prefix sum
+                of own subarrays
+*
+*/
+
+TYP summation(TYP *p, TYP *r);
+void prefix_sum(TYP *p, TYP *r, TYP sum);
+void populate_matrices(TYP *ptr, int N);
+void slaveproc(TYP *sub_pfx_arr, int N, TYP *A);
+void print(TYP *arr, int N);
+
+int npcs;
+
+/*
+*timing elements
+*/
+  struct tms tim;
+
+  float ptime=0, stime=0, speedup;
+
+
+
+
+int main(int argc, char **argv)
+{
+        int N = atoi(argv[1]);
+        TYP *A = (TYP*) malloc(N * sizeof *A);
+        populate_matrices(A, N);
+
+
+  //    print(A, N);
+ /*
+ *getting the requested number of
+ *processors from the terminal
+ */
+        npcs=atoi(argv[2]);
+
+        if(npcs>N)
+          npcs = N;
+
+  /*
+  *requesting the cpus from the machine
+  */
+        m_set_procs(npcs);
+
+  /*
+  *setting numprocs to be the actual
+  *number of cpus the machine has
+  *provided.  Can be different from
+  *the requested amount.
+  */
+        npcs=m_get_numprocs();
+
+        TYP *sub_pfx_arr = (TYP*)malloc(npcs * sizeof *sub_pfx_arr);
+  /*
+  *sequential prefix sum
+  */
+        stime=times(&tim);
+        int i;
+        for(i=0; i<10000; i++)
+        prefix_sum(A, &A[N], 0);
+        stime=times(&tim)-stime;
+
+ //     print(A, N);
+
+
+        populate_matrices(A, N);
+      /*
+      *prefix sums in parallel
+      */
+        ptime=times(&tim);
+        m_fork(slaveproc, sub_pfx_arr,N, A);
+        m_kill_procs();
+        ptime=times(&tim)-ptime;
+
+//      print(A, N);
+        free(sub_pfx_arr);
+
+        printf("Numprocs: %d N: %d Sequential time: %.1f Parallel time: %.1f Spee
+dup: %f\n"
+                 ,npcs,N, stime, ptime, stime/ptime);
+        return 1;
+}
+
+void slaveproc(TYP *sub_pfx_arr, int N, TYP *A)
+{
+        int stride, subidx;
+        TYP sum, *p, lsum;
+        int id;
+        stride = N/npcs;
+        id= m_get_myid();
+        subidx = N/npcs*id;
+
+        /*
+        *last processor gets leftover elements
+        */
+           if(id==npcs-1) stride+=N%npcs;
+        int i;
+    for(i=0; i<10000; i++)
+{
+        *(sub_pfx_arr+id)=summation(A+subidx, A+subidx+stride);
+
+        /*SYNCHRONIZATION HERE*/
+        m_sync();
+
+/*
+*find prefix sums on local sums
+*/
+      p=A+subidx+stride-1;
+      *p=*(sub_pfx_arr+id);
+
+        if(id!=0)
+         {
+                int i;
+                for(i=0; i<id; i++)
+                *p+= *(sub_pfx_arr+i);
+         }
+
+
+/*
+*All processors except 0 will grab left neighbor sum
+*/
+    lsum=0;
+    if(id!=0)
+      lsum=*(p-stride);
+/*
+*All processors calculate own prefix sums (iv)
+*/
+        prefix_sum(A+subidx, A+subidx+stride-1, lsum);
+  /*  for(p=A+subidx;p<A+subidx+stride-1;p++)
+*     {
+*       *p+=lsum;
+*       lsum=*p;
+*     }*/
+ }
+}
+void prefix_sum(TYP *p, TYP *r, TYP sum)
+{
+  int i=0;
+  for(; p<r; p++)
+  {
+//      printf("%d i\n", i++);
+    *p+=sum;
+    sum=*p;
+  }
+}
+TYP summation(TYP *p, TYP *r)
+{
+
+      TYP sum=0;
+        for(; p<r; p++)
+          sum+=*p;
+        return sum;
+}
+void populate_matrices(TYP *ptr, int N)
+{
+  int i;
+  while(i<N)
+   *(ptr++)=i++;
+}
+
+
+void print(TYP *arr, int N)
+
+  {
+     int i;
+    for(i=0; i<N; i++)
+        printf("%d ", arr[i]);
+    printf("\n");
+
+  }

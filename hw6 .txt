@@ -1,0 +1,450 @@
+  /*Assume B_arr is in Column Major Order
+    A_arr and C_arr are in Row-Major Order
+
+
+    Square Matrices Only!!
+  */
+  #define N 6
+  #include <string.h>
+  #include <mpi.h>
+  #include <stdio.h>
+  #include <stdlib.h>
+  #include <math.h>
+    
+  int id;             // Rank of current processor
+  int nprocs;  
+  int dim;       // Number of processors
+//int procs[dim][dim];
+int size = N*N;
+void populate_matrix(int a[N][N])
+{
+    
+    int i,j;
+    for(i=0;i<N;i++)
+    {
+          for(j=0;j<N;j++)
+          {
+            a[i][j]=1;
+          }
+          
+    }
+}
+
+ 
+
+
+
+int main(int argc, char *argv[])
+{
+
+      int A_arr[N][N];
+      int B_arr[N][N];//B_arr is transposed initially (just to save time)
+      int C_arr[N][N];
+      /*starting and resultant arrays in P0*/
+      
+      double elapsed_time; 
+      /*for timing purposes*/
+
+       MPI_Status status;
+       MPI_Init(&argc, &argv);
+       MPI_Comm_rank(MPI_COMM_WORLD, &id);
+       MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+       /*MPI info*/
+       int p, chunk,  rmainder;
+      /* if(id==0)
+        printf("0 here\n");
+        if(id==1)
+        printf("1 here\n");
+      if(id==2)
+        printf("2 here\n");
+      if(id==3)
+        printf("3 here\n");*/
+       chunk=sqrt(size/nprocs);
+
+       if(size%nprocs!=0)
+        printf("try a different N or nprocs\n");
+
+       int A[chunk][chunk], B[chunk][chunk], C[chunk][chunk];
+       int A_tmp[chunk][chunk], B_tmp[chunk][chunk];
+
+       
+       //printMatrix(C);
+       int **proc=malloc(sizeof(int*)*sqrt(nprocs));
+/*holds the processors for each row/column.  use this array to map sends/receives*/
+       int i,j;
+       for (i = 0; i < sqrt(nprocs); i++)  
+          proc[i] = (int*) malloc(sqrt(nprocs)*sizeof(int));
+
+        int count=0;
+          for(i=0; i<sqrt(nprocs); i++)
+            for(j=0; j<sqrt(nprocs); j++)
+                proc[i][j]=count++;
+
+          if(id==0)
+			     if(nprocs == 1 /*|| nprocs=='\0'*/)
+			     {
+                
+              printf("Run with more than 1 processor \n");
+             /* if(nprocs=='\0')
+              printf("Set processors with -np '#' \n");*/
+
+				      fflush(stdout);
+              MPI_Finalize();
+
+           }  
+
+
+     			   
+         if(id == 0)
+         {
+            //printf("id = %d \n", id);
+            
+            populate_matrix(A_arr); 
+            populate_matrix(B_arr);
+
+           for(i=0; i<chunk; i++)
+           {
+            memcpy(A[i], A_arr[i], sizeof(int)*chunk);
+            memcpy(B[i], B_arr[i], sizeof(int)*chunk);
+            
+           }
+          /*p0 moves its A array into place*/
+
+           
+        /*  for(i=0; i<chunk; i++)
+            for(j=0; j<chunk; j++)
+              printf("%d\n", B[i][j]);
+            */
+
+            /*Start the timer*/
+            elapsed_time = -MPI_Wtime();
+         
+             int d=0;
+             //int i;
+            p=1;
+
+            /*Sending submatrices to other processors, skipping first submatrix (it's mine)*/
+            while(d<sqrt(nprocs))
+            {
+              while(p<sqrt(nprocs))
+              {
+                for(i=0; i<sqrt(size/nprocs); i++)
+                  {
+                    //A array
+                    MPI_Send(&A_arr[d*(int)sqrt(size/nprocs)+i][(p*(int)sqrt(size/nprocs))],
+                    (int)sqrt(size/nprocs)/*size*/,
+                    MPI_INT,d*(int)sqrt(nprocs)+p/*dest*/,
+                    d*(int)sqrt(nprocs)+p/* tag*/,
+                    MPI_COMM_WORLD);
+
+                    //B array
+                    MPI_Send(&B_arr[d*(int)sqrt(size/nprocs)+i][(p*(int)sqrt(size/nprocs))],
+                    (int)sqrt(size/nprocs)/*size*/,
+                    MPI_INT,d*(int)sqrt(nprocs)+p/*dest*/,
+                    d*(int)sqrt(nprocs)+p/* tag*/,
+                    MPI_COMM_WORLD);
+
+                   
+                  }
+                  p++;
+              } 
+            p=0;  d++; 
+            }
+           
+
+          }
+          else if(id!=0)
+          {
+           
+            for(i=0; i<sqrt(size/nprocs); i++)
+            {
+                          
+               MPI_Recv(A[i],sqrt(size/nprocs), MPI_INT,  0, id, MPI_COMM_WORLD, &status);
+               
+
+               MPI_Recv(B[i],sqrt(size/nprocs), MPI_INT,  0, id, MPI_COMM_WORLD, &status);
+
+            }   
+            //}
+
+          }
+
+//----------------------------------------------------------------------------
+          /*At this point, all processors have their initial submatrices*/
+//----------------------------------------------------------------------------
+                  
+//----------------------------------------------------------------------------
+          /*Line up appropriate submatrices, according to step 1 in cannon's*/
+//----------------------------------------------------------------------------
+        int rootp= (int)sqrt(nprocs);
+       // printf("rootp = %d", rootp);
+         //left ends pass their A matrix
+        for(i=0; i<sqrt(nprocs); i++){
+
+                  if(id%rootp==i && id/rootp!=0)
+                  {
+                      
+        
+                      MPI_Send(A[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((((id%rootp)-(id/rootp))%rootp)+rootp)%rootp],
+                      proc[id/rootp][((((id%rootp)-(id/rootp))%rootp)+rootp)%rootp],
+                      MPI_COMM_WORLD);
+                  
+                  }
+        
+                 
+                  if(((id%rootp)+(id/rootp)) % rootp == i && (id/rootp)!=0)
+                  {
+                      //printf("id %d recving A_tmp from %d\n", id,  proc[id/rootp][((id%rootp)+(id/rootp))%rootp]);
+                      MPI_Recv(A_tmp[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((id%rootp)+(id/rootp))%rootp],
+                      id,MPI_COMM_WORLD, &status);
+
+                      
+
+                    
+
+                  }
+                  
+
+
+                }
+              /*  for(i=0; i<chunk; i++)
+                    for(j=0; j<chunk; j++)
+                      printf("A %d id = %d\n", A[i][j], id);
+                    fflush(stdout);
+*/
+                /*B matrix */
+                for(i=0; i<sqrt(nprocs); i++)
+                {
+
+                  if(id/rootp==i && id%rootp!=0)
+                  {
+        
+                  // printf("id = %d send %d \n", id, ((id/rootp-(id%rootp))+rootp)%rootp);
+                   // printf("id = %d sending to %d  \n",id, proc[((id/rootp-(id%rootp))+rootp)%rootp][id%rootp]  );
+                     // fflush(stdout);
+        
+                      MPI_Send(B[0],size/nprocs,MPI_INT,
+                      proc[((id/rootp-(id%rootp))+rootp)%rootp][id%rootp],
+                      proc[((id/rootp-(id%rootp))+rootp)%rootp][id%rootp],
+                      MPI_COMM_WORLD);
+                      
+                     // printf("id %d sent to proc %d \n", id, proc[((id/rootp-(id%rootp))+rootp)%rootp][id%rootp] );
+        
+                  }
+        
+                  
+                  if((id%rootp)!=0 && ((id%rootp)+(id/rootp)) % rootp == i)
+                  {
+                    
+                 //   printf("id %d receiving from processor %d \n", id, proc[((id%rootp)+(id/rootp))%rootp][id%rootp] );
+
+                      MPI_Recv(B_tmp[0],size/nprocs,MPI_INT,
+                      proc[((id%rootp)+(id/rootp))%rootp][id%rootp],
+                      id,MPI_COMM_WORLD, &status);
+                    //  printf("id %d recving B_tmp from %d\n", id,  proc[((id%rootp)+(id/rootp))%rootp][id%rootp]);
+                   //MPI_Send(A[0],size/nprocs,MPI_INT,proc[id/rootp][(((id%rootp)-(id/rootp))%rootp)+rootp],proc[id/rootp][(((id%rootp)-(id/rootp))%rootp)+rootp],MPI_COMM_WORLD);
+                    
+                  
+                  }
+              
+                }
+
+              
+               
+//----------------------------------------------------------------------------
+          /*At this point, all processors have their starting elements*/
+//----------------------------------------------------------------------------
+                /*calculate first C values, C[i][j]+=A[i][j]*B[i][j]*/
+                  if((int)id/rootp!=0)
+                    for(i=0; i<chunk; i++)
+                    {
+                      
+                      memcpy(A[i], A_tmp[i], sizeof(int)*chunk);
+                       
+                    }
+
+                  if((int)id%rootp!=0)
+                    for(i=0; i<chunk; i++)
+                    {
+                      
+                      memcpy(B[i], B_tmp[i], sizeof(int)*chunk);
+                       
+                    }
+
+                  memset(C[0], 0, chunk*chunk*(sizeof(int)));
+                  
+                 for(i=0; i<chunk; i++)
+                    for(j=0; j<chunk; j++)
+                      C[i][j]+=A[i][j]*B[i][j];
+
+//----------------------------------------------------------------------------
+          /*At this point, All processors have computed the initial values for C
+            ready to start shifting by 1
+          */
+//----------------------------------------------------------------------------
+
+        /*Shift A 1 move left, Shift B 1 move up.
+          This happens N-1 times*/
+         /*   
+            for(i=1; i<N; i++)
+            {
+              printf("i= %d", i);
+            */
+              int k;
+              for(k=1; k<N; k++)
+               { 
+                  if(id%2==0)
+                  {
+                              
+                      MPI_Send(A[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((((id%rootp)-1)%rootp)+rootp)%rootp],
+                      proc[id/rootp][((((id%rootp)-1)%rootp)+rootp)%rootp],
+                      MPI_COMM_WORLD);
+
+                       MPI_Recv(A_tmp[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((id%rootp)+1)%rootp],
+                      id,MPI_COMM_WORLD, &status);
+                  
+                  }
+                         
+                  else
+                  {
+                      //printf("id %d recving A_tmp from %d\n", id,  proc[id/rootp][((id%rootp)+(id/rootp))%rootp]);
+                      MPI_Recv(A_tmp[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((id%rootp)+1)%rootp],
+                      id,MPI_COMM_WORLD, &status);
+
+                      MPI_Send(A[0],size/nprocs,MPI_INT,
+                      proc[id/rootp][((((id%rootp)-1)%rootp)+rootp)%rootp],
+                      proc[id/rootp][((((id%rootp)-1)%rootp)+rootp)%rootp],
+                      MPI_COMM_WORLD);
+ 
+                  }
+
+                  if(id/rootp%2==0)
+                  {
+                              
+                      MPI_Send(B[0],size/nprocs,MPI_INT,
+                      proc[((id/rootp-1)+rootp)%rootp][id%rootp],
+                      proc[((id/rootp-1)+rootp)%rootp][id%rootp],
+                      MPI_COMM_WORLD);
+
+                      MPI_Recv(B_tmp[0],size/nprocs,MPI_INT,
+                      proc[((id/rootp)+1)%rootp][id%rootp],
+                      id,MPI_COMM_WORLD, &status);
+                  
+                  }
+                         
+                  else
+                  {
+                      printf("id %d recving B_tmp from %d\n", id,   proc[((id/rootp)+1)%rootp][id%rootp]);
+                      MPI_Recv(B_tmp[0],size/nprocs,MPI_INT,
+                      proc[((id/rootp)+1)%rootp][id%rootp],
+                      id,MPI_COMM_WORLD, &status);
+
+                      MPI_Send(B[0],size/nprocs,MPI_INT,
+                      proc[((id/rootp-1)+rootp)%rootp][id%rootp],
+                      proc[((id/rootp-1)+rootp)%rootp][id%rootp],
+                      MPI_COMM_WORLD);
+ 
+                  }
+
+                     for(i=0; i<chunk; i++)
+                    {
+                      
+                      memcpy(A[i], A_tmp[i], sizeof(int)*chunk);
+                      memcpy(B[i], B_tmp[i], sizeof(int)*chunk);
+                    }
+
+                   
+                   
+                    /*Accumulating C[i][j]+=A[i][j]*B[i][j]*/
+
+                    for(i=0; i<chunk; i++)
+                      for(j=0; j<chunk; j++)
+                        C[i][j]+=A[i][j]*B[i][j];
+
+                 }
+
+                    
+
+                
+                       
+
+
+//----------------------------------------------------------------------------
+          /*At this point, all C should be calculated locally at each P
+          */
+//----------------------------------------------------------------------------
+               
+                p=1;
+                count =1;
+                int d =0;
+
+            /*Receiving C submatrices from slaves*/
+          if(id==0)
+          {
+            while(d<sqrt(nprocs))
+            {
+              while(p<sqrt(nprocs))
+              {
+                for(i=0; i<sqrt(size/nprocs); i++)
+                  {
+                   // printf("i = %d \n", i);
+                    //A array
+
+                    MPI_Recv(&C[d*(int)sqrt(size/nprocs)+i][(p*(int)sqrt(size/nprocs))],
+                    (int)sqrt(size/nprocs),MPI_INT,
+                    count,
+                    id,
+                    MPI_COMM_WORLD,
+                    &status);
+
+                  //  printf("received C from %d", count -1);
+  
+                  }
+                  count++,p++;
+              } 
+            p=0;  d++; 
+            }
+           
+
+          }
+          else
+          {
+            for(i=1; i<nprocs; i++)
+           {   
+               if(id==i)
+               for(j=0; j<sqrt(size/nprocs); j++)
+               MPI_Send(C[j],sqrt(size/nprocs), MPI_INT,  0, 0, MPI_COMM_WORLD);
+             
+             
+            }
+
+            
+
+          }
+
+              if(id==0)
+                 for(i=0; i<N; i++)
+                      for(j=0; j<N; j++)
+                        printf("C[%d][%d]= %d\n ", i, j, C[i][j]);
+                      fflush(stdout);
+                
+
+
+}
+
+                 
+                  /*for(i=0; i<chunk; i++)
+                    for(j=0; j<chunk; j++)
+                      printf("B %d id = %d\n", B_tmp[i][j], id);
+                    fflush(stdout);
+
+                    for(i=0; i<chunk; i++)
+                    for(j=0; j<chunk; j++)
+                      printf("A %d id = %d\n", A_tmp[i][j], id);
+                    fflush(stdout);
+*/

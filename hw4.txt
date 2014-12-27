@@ -1,0 +1,327 @@
+#include "stdio.h"
+#include "sys/types.h"
+#include "sys/times.h"
+#include "ulocks.h"
+#include "sys/param.h"
+#include <time.h>
+#include <string.h>
+#define TYP int
+
+#define M 1000
+struct tms tim;
+
+  float ptime=0, stime=0, speedup;
+
+int npcs, numprocs;
+TYP *data, *datresult;
+int *ready;
+int N;
+void barr(int j, int id)
+{
+
+
+   /*   printf("id %d\n waiting on ", id, id==npcs-1? id+j-1: id+j);*/
+
+        if(id==0)
+        {
+          if(id==numprocs-1) return;
+          *(ready+id)=1;
+        /*cpu 0 signals here first*/
+          // printf("ready and waiting on id 1\n");
+
+          while(!*(ready+id+j));
+          /*cpu 0 checks for right neighbor*/
+          // printf("id 1 turned ready\n");
+
+          *(ready+id)=2;
+          /*when right neighbor signals,
+            changes to 2
+          */
+
+            // printf("my ready is 2\n");
+
+          while(*(ready+id+j)!=2);
+          // printf("id 1 is at 2\n");
+          *(ready+id+j)=0;
+          // printf("reset id 1 %d \n", *(ready+id+j));
+
+        }
+
+        else if(id!=numprocs-1)
+          /*if not cpu 0...*/
+        {
+           // printf("waiting on id %d\n", id+1);
+
+          while(!*(ready+id+j)) ;
+          /*check your right neighbor's signal for ready*/
+          // printf("id %d turned ready\n", id + 1);
+
+          *(ready+id)=1;
+          /*when they signal ready, you signal ready.
+          */
+
+          while(*(ready+id+j)!=2);
+          /*wait until your neighbor changes to 2
+          */
+            *(ready+id)=2;
+            *(ready+id+j)=0;
+            // printf("id %d set id %d to %d\n",id, id+j, 0);
+            /*set right neighbor to 0
+            */
+
+        }
+        else
+        {
+                    // printf("waiting on id 0\n");
+
+          while(!*(ready));
+          /*last cpu checks on p0
+          */
+          // printf("id 0 turned ready\n");
+
+          *(ready + id)=1;
+          /*signal ready
+          */
+          // printf("signal ready\n");
+
+          while(*ready!=2);
+          /*wait for p0 to signal 2
+          */
+          // printf("id 0 turned 2\n");
+          *(ready+id)=2;
+          *(ready) = 0;
+          /*set p0 to 0
+          */
+                    // printf("set id 0 to 0\n");
+
+
+        }
+//        fflush(stdout);
+}
+
+int partition(TYP *arr, int l, int r)
+{
+  int pivot, i, j, tmp;
+  pivot = *(arr+l);//pivot is left element
+  i=l;
+  j=r+1;
+    while(1)
+    {
+      do ++i;while(*(arr+i)<pivot && i<=r);
+      do --j;while(*(arr+j)>pivot );
+
+      if(i>=j) break;
+
+     tmp=*(arr+i); *(arr+i)=*(arr+j), *(arr+j)=tmp;
+
+    }
+    tmp=*(arr+l); *(arr+l)=*(arr+j); *(arr+j)=tmp;
+    return j;
+}
+
+void quicksort(TYP *arr, int l, int r)
+{
+  int m;
+  if(l<r)
+  {
+    m=partition(arr, l, r);
+    quicksort(arr, l, m-1);
+    quicksort(arr, m+1, r);
+  }
+}
+void print(int arr[], int size)
+  {
+     int i;
+    for(i=0; i<size; i++)
+        printf("%d ", arr[i]);
+    printf("\n");
+
+  }
+void merge(int i, int llength, int rlength, TYP *datacp, TYP *datresult);
+void populate_matrices(TYP *ptr)
+{
+  int i=N;
+  while(i>=0)
+   *(ptr++)=i--;
+}
+void slaveproc2(void)
+{
+    int id, mysize, rlength, llength, i, j;
+    id=m_get_myid();
+    TYP *datacp;
+
+    mysize=N/npcs;
+
+    *(ready+id)=0;
+
+    rlength=id!=npcs-1?mysize:0;
+
+    if(id==0) mysize+=N%npcs;
+    /*P0 breaks tie*/
+
+    llength = mysize;
+
+
+    i=id*N/npcs;
+
+    if(id!=0) i+=N%npcs;
+    /*every processor except zero will
+      need to move their stgarting positions
+      if N cannot be broken down evenly
+    */
+
+      datacp =(TYP *)malloc(N*sizeof(TYP));
+      /*each processor making a local copy of
+        global array
+      */
+
+      memcpy(datacp, data, N*sizeof(TYP));
+
+      // printf("id %d l %d r %d\n", id, i, i+mysize);
+
+      quicksort(datacp, i, i+mysize-1);
+      /*quicksorting own subarrays*/
+
+      memcpy(datresult+i,datacp+i, mysize*sizeof(TYP));
+      /*copying quicksorted subarray into result array*/
+      m_sync();
+      /*all subarrays are quicksorted at this point*/
+      memcpy(datacp, datresult, N*sizeof(TYP));
+      /*grabbing a new, quicksorted array of size N*/
+      // if(id==0) print(datresult, N);
+
+      // fflush(stdout);
+
+
+
+
+  /*each processor sorts their
+    own subarrays
+  */
+
+    if(id%2==0 && id<npcs-1)
+
+  /*1st iteration merge. N chunks merge into N/2 chunks*/
+      merge(i, llength, rlength, datacp, datresult);
+
+
+    if(id==0) npcs-=npcs/2;
+
+    m_sync();
+    /*all first merges finished at this point*/
+
+     j=4;
+
+    while(npcs>2)
+    {
+
+      if(id%j==0)
+        {
+          /* every jth processor
+             does this step.  j
+             doubles every time
+             through while loop.
+          */
+          memcpy(datacp, datresult, N*sizeof(TYP));
+          /*grabbing a new, mergesorted array of size N*/
+          // if(id==0) print(datresult, N);
+          m_sync();
+          /*all cpus have their new copy at this point*/
+
+          mysize=N/npcs;
+          /*Need to recalculate
+            the left and right lengths
+            for each iteration in this loop
+          */
+
+
+          rlength=id!=npcs-1?mysize:0;
+        /*calculates right side*/
+
+          if(id==0) mysize+=N%npcs;
+
+            llength = mysize;
+            /*calculates the left side*/
+
+            merge(i, llength, rlength, datacp, datresult);
+
+
+        }else
+        {
+         m_sync();
+        }
+
+         m_sync();
+        j+=j;
+      /*double j each time through*/
+
+        if(id==0) npcs-=npcs/2;
+      /*P0 decreases num of processors by half
+        each time through
+      */
+
+        // fflush(stdout);
+      }
+      /*final merge, when just 2 processors left*/
+      if(id==0)
+      {
+        // printf("id 0 final merge %d npcs", npcs);
+        memcpy(datacp, datresult, N*sizeof(TYP));
+          /*grabbing a new, mergesorted array of size N*/
+        // print(datresult, N);
+
+        llength=N/npcs + (N%npcs);
+        rlength=id!=npcs-1?N/npcs:0;
+        merge(i, llength, rlength, datacp, datresult);
+        /*P0 merges the last two halves*/
+
+      }
+}
+void slaveproc(void)
+{
+    int id, mysize, rlength, llength, i, j;
+    id=m_get_myid();
+    TYP *datacp;
+
+    mysize=N/npcs;
+
+    *(ready+id)=0;
+
+    rlength=id!=npcs-1?mysize:0;
+
+    if(id==0) mysize+=N%npcs;
+    /*P0 breaks tie*/
+
+    llength = mysize;
+
+
+
+    i=id*N/npcs;
+
+    if(id!=0) i+=N%npcs;
+    /*every processor except zero will
+      need to move their stgarting positions
+      if N cannot be broken down evenly
+    */
+
+      datacp =(TYP *)malloc(N*sizeof(TYP));
+      /*each processor making a local copy of
+        global array
+      */
+
+      memcpy(datacp, data, N*sizeof(TYP));
+
+      // printf("id %d l %d r %d\n", id, i, i+mysize);
+
+      quicksort(datacp, i, i+mysize-1);
+      /*quicksorting own subarrays*/
+
+      memcpy(datresult+i, res, (rlength+llength)*sizeof(TYP));
+      /*copying sorted data back into */
+
+      free(res);
+
+      free(dat);
+}
+
+

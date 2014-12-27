@@ -1,0 +1,22 @@
+N^3 processors are assigned to compute multiplication of A[i][j]*B[j][i].  The results are put into an array of size N^3.  The N^3 sums are distributed initially to N^3/2 processors and the reduction of N^3 elements is done in tree fashion.  
+
+Analysis:  The multiplications can be done in O(1) time using N^3 processors, assuming each multiplication takes constant time. The reduction takes O(logn^3)=O(3logn)=O(logn) time.  The additions must be done in levels, and this cannot be avoided.
+
+TS = sequential time
+TP = parallel time
+W = work done
+p = number of processors
+S = speedup
+E = efficiency
+C = cost
+
+		TS = O(n^3)
+		TP = O(logn)   
+		S = TS/TP = O(n^3/logn)
+		E = S/p = O(n^3/logn)/n^3 = O(1/logn)
+		W = n^3 + (logn^3) = n^3 + 3logn
+		C = pTP = n^3 * O(logn) = O(n^3logn) = not cost-optimal (by a factor of logn)
+
+I am working on the range of optimality, I believe that I need to preserve the algorithmic variables of computation and rewrite the speedup and efficiency functions in terms of overhead time.  I am still figuring this part out.
+
+

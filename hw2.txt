@@ -1,0 +1,312 @@
+#include "stdio.h"
+#include "sys/types.h"
+#include "sys/times.h"
+#include "ulocks.h"
+#include "sys/param.h"
+#include <time.h>
+#define N 150
+void round_robin(int id);
+void print(int arr[N][N], char c);
+void m_rrmul(int *A_row, int *B, int C_row);
+void band_mul(int *A_row,  int D_row, int id);
+#include "stdio.h"
+#include "sys/types.h"
+#include "sys/times.h"
+#include "ulocks.h"
+#include "sys/param.h"
+#include <time.h>
+#define N 150
+void round_robin(int id);
+void print(int arr[N][N], char c);
+void m_rrmul(int *A_row, int *B, int C_row);
+void band_mul(int *A_row,  int D_row, int id);
+void populate_matrices(int *ptr);
+void slaveproc();
+void seq_mul();
+
+int A[N][N];
+int B[N][N];
+int C[N][N];
+int D[N][N];
+int E[N][N];
+int numprocs;
+int bandwidth;
+int x;
+
+/*
+*timing elements
+*/
+  struct tms tim;
+
+  float rtime=0, stime=0, btime=0, speedup;
+
+
+int main(int argc, char **argv)
+{
+
+  /*
+   *getting the requested number of
+   *processors from the terminal
+  */
+
+        numprocs=atoi(argv[1]);
+
+
+
+  /*populating the matrices with values
+  */
+        populate_matrices(B[0]);
+        populate_matrices(A[0]);
+
+
+        stime=times(&tim);
+
+
+        seq_mul();
+
+
+        stime=times(&tim)-stime;
+  /*
+  *requesting the cpus from the machine
+  */
+        m_set_procs(numprocs);
+
+  /*
+  *setting numprocs to be the actual
+  *number of cpus the machine has
+  *provided.  Can be different from
+  *the requested amount.
+  */
+        numprocs=m_get_numprocs();
+
+  /*
+  *setting bandwidth to equal parts of
+  *resultant matrix
+  */
+        bandwidth = N/numprocs;
+
+
+
+        rtime=times(&tim);
+  /*
+  *forking the slave processes for Round-Robin
+  */
+        x=1;
+        m_fork(slaveproc,numprocs, x);
+
+  /*
+  *requesting the processes kill after computation
+  */
+
+        m_kill_procs();
+  /*
+  *Calculating parallel time for Round-Robin
+  */
+
+        rtime = times(&tim)-rtime;
+
+  /*
+  *setting starting time for Banded
+  */
+        btime=times(&tim);
+
+  /*
+  *forking the slave processes for Banded
+  */
+        x=0;
+        m_fork(slaveproc,numprocs, x);
+
+  /*
+  *requesting the processes kill after computation
+  */
+
+        m_kill_procs();
+  /*
+  *Calculating parallel time for Banded
+  */
+
+        btime = times(&tim)-btime;
+
+
+
+  /*
+  *Printing the times
+  */
+        printf("Round-Robin: %f\n", rtime);
+
+        printf("Banded: %f\n", btime);
+
+        printf("Sequential %f\n", stime);
+
+        printf("RR Speedup: %f\n", stime/rtime);
+
+        printf("Banded Speedup: %f\n", stime/btime);
+
+        printf("Num Procs: %d\n", numprocs);
+
+        printf("N: %d\n", N);
+
+  /*
+  *Printing the resultant matrices
+  */
+//         print(C, 'C');
+        // print(D, 'D');
+     //   print(E, 'E');
+}
+
+void populate_matrices(int *ptr)
+
+  /*
+  *sets matrix elements to j.
+  */
+
+  {
+    int i, j;
+    for(i=1; i<N+1; i++)
+      for(j=1; j<N+1; j++)
+        *(ptr++)=j;
+  }
+
+
+void slaveproc()
+
+  {
+
+    int C_row;
+    int i, id;
+    id = m_get_myid();
+    C_row = id*bandwidth;
+
+
+    if(x)
+
+    /*
+    *ROUND-ROBIN ACCESS
+    */
+
+        round_robin(id);
+
+
+    else
+
+    /*
+    *BANDED ACCESS
+    */
+
+        band_mul(A[C_row], C_row, id);
+  }
+
+void round_robin(int id)
+
+  {
+    int i;
+    for(i=id; i<N; i+=numprocs)
+
+        m_rrmul(A[i], B[0], i);
+  }
+
+
+void seq_mul()
+  {
+    int i,j,k, sum=0;
+    for(i=0; i<N; i++)
+      for(j=0; j<N; j++)
+        {
+
+        for (k=0; k<N; k++)
+           sum+=A[i][k]*B[k][j];
+
+        E[i][j]=sum;
+        sum=0;
+        }
+
+  }
+
+
+void m_rrmul(int *A_row, int *B, int C_row)
+
+  /*
+  *  row multiplier.  multiplies a row of A by
+  *  by the matrix B.
+  *
+  */
+
+  {
+      int i, j, k;
+      int row[N*N];
+      int *r=row;
+      int *c_pt;
+
+      for(j=0; j<N; j++)
+        for(k=0; k<N; k++)
+          *(r++)= *(A_row+j) * *(B+(N*j)+k);
+
+      c_pt=C[C_row];
+      r=row;
+      for(j=0; j<N; j++)
+        *(c_pt++)=sum(r++);
+
+  }
+
+
+void band_mul(int *A_row,  int D_row, int id)
+
+  /*
+  * multiply with banded access
+  */
+
+  {
+
+    int i, j, k;
+    int bw = (N%numprocs!=0 && id==numprocs-1)? bandwidth+1: bandwidth;
+    int band[N*N*bw];
+    int *r, *d_pt, *B_ptr;
+
+    B_ptr = B[0];
+    r=band;
+
+    for(i=0; i< bw; i++)
+      //LOOP over each row in bandwidth...
+      for(j=0; j<N; j++)
+          for(k=0; k<N; k++)
+              *(r++)=*(A_row + j) * *(B_ptr+(N*j)+k);
+
+  /*
+  * reducing assigning the values to the corresponding
+  * D-array index
+  */
+
+    r=band;
+    d_pt = D[D_row];
+
+    for(j=0; j<N*bw; j++)
+        *(d_pt++)=sum(r++);
+  }
+
+void print(int arr[N][N], char c)
+
+  {
+    int i, j;
+    printf("%c\n", c);
+    for(i=0; i<N; i++)
+      {
+        printf(" ");
+          for(j=0; j<N; j++)
+          printf("%d ", arr[i][j]);
+        printf("\n");
+      }
+  }
+
+
+int sum(int *a)
+
+  {
+    int i, j, sum;
+    i=0; sum=0;
+    while(i++<N)
+      {
+        sum+=*a;
+        a+=N;
+      }
+    return sum;
+  }

@@ -1,0 +1,21 @@
+1.  2^(k+1)-1 > 2k^2 + 2k + 1
+
+     (tree)               (mesh)
+
+   Base Case:
+
+    2^6-1 > 2*5^2+2*5+1
+
+     63 > 61
+
+ Inductive step:
+
+   2^(k+2) -1 > 2(k^2+2k+1)+2k+3
+
+   2*2^(k+1)-1> 2(k^2+2k+1)+2k+3
+
+  2^(k+1)-1> k^2+3k+2 .
+
+2.  Trying to figure out now...(still working on this)..
+
+  
